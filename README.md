@@ -24,8 +24,8 @@ ecs_app_run(world, &(ecs_app_desc_t) {
 ```
 
 In C++:
-```c
-world.set<flecs::Rest>({});
+```cpp
+world.set<flecs::rest::Rest>({});
 ```
 
 In C++ with the app addon:
