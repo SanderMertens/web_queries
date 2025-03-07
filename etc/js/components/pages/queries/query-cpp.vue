@@ -202,11 +202,7 @@ const argsTokens = (g, qi) => {
     }
 
     refToken(g, term.first, false);
-    if (term.oper === "optional") {
-      g.operator("*");
-    } else {
-      g.operator("&"); 
-    }
+    g.operator("&");
     i ++;
   }
 
@@ -254,12 +250,6 @@ const builderTokens = (g, qi) => {
       g.operator("(");
       g.number(templateArg - 1);
       g.operator(")");
-
-      if (term.oper === "optional") {
-        g.operator(".");
-        g.function("optional");
-        g.operator("()");
-      }
 
       if (term.second) {
         g.operator(".");
@@ -338,7 +328,7 @@ const builderTokens = (g, qi) => {
       }
     }
 
-    if (term.oper != "and" && term.oper != "not" && term.oper != "optional") {
+    if (term.oper != "and" && term.oper != "not") {
       g.operator(".");
       if (term.oper == "or") {
         g.function("or_");

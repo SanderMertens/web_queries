@@ -92,26 +92,24 @@ function selectItem(item) {
 
 <style scoped>
 #pane-tree {
-  display: grid;
-  grid-column: 1;
-  grid-template-rows: calc(72px + var(--gap)) 1rem;
-  gap: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   border-radius: var(--border-radius-medium);
 }
 
 div.pane-tree-search-box {
-  grid-row: 1;
+  flex: 0 0 auto;
   padding: 8px;
-
   display: grid;
   grid-template-rows: 36px 36px;
   gap: var(--gap);
 }
 
 div.pane-tree-entity-tree {
-  grid-row: 2;
-  height: calc(100vh - 72px - 8px - var(--header-height) - var(--footer-height) - 4 * var(--gap));
+  flex: 1 1 auto;
   overflow: auto;
+  min-height: 0;
 }
 
 div.pane-tree-select {

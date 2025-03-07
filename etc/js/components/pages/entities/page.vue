@@ -1,31 +1,45 @@
 <template>
   <div id="page-entities" :class="pageCss">
-    <pane-tree 
-      :conn="conn"
-      v-model:app_params="appParams"
-      @scriptOpen="onScriptOpen"
-      @entityOpen="onEntityOpen"
-      v-if="app_params.sidebar">
-    </pane-tree>
-    <div id="canvasPlaceholder" :class="canvasCss" :style="`grid-column: ${canvasColumn}`">
-    </div>
-    <div :class="scriptCss" :style="`grid-column: ${scriptColumn}`">
-      <pane-scripts
-        :conn="conn"
-        v-model:script="appParams.script"
-        v-model:scripts="appParams.scripts"
-        ref="pane_scripts">
-      </pane-scripts>
-    </div>
-    <div class="page-entities-inspector" :style="`grid-column: ${inspectorColumn}`"
-      v-if="showInspector">
-      <pane-inspector
-        :conn="conn"
-        :app_params="appParams"
-        @abort="onAbort"
-        @scriptOpen="onScriptOpen">
-      </pane-inspector>
-    </div>
+    <split-pane>
+      <div class="split-pane" v-if="app_params.sidebar" :style="{ width: sidebarWidth + 'px' }">
+        <pane-tree 
+          :conn="conn"
+          v-model:app_params="appParams"
+          @scriptOpen="onScriptOpen"
+          @entityOpen="onEntityOpen">
+        </pane-tree>
+      </div>
+      <div class="handle" v-if="app_params.sidebar" @mousedown="(e) => startResize('sidebar', e)">
+        <div class="handle-grab-box"></div>
+      </div>
+
+      <div class="split-pane main-pane" :style="{ width: mainWidth + 'px' }">
+        <div id="canvasPlaceholder" :class="canvasCss" v-if="showCanvas">
+        </div>
+      </div>
+
+      <div class="handle" v-if="showInspector || showScript" @mousedown="(e) => startResize('inspector', e)">
+        <div class="handle-grab-box"></div>
+      </div>
+
+      <div class="split-pane" v-if="showInspector || showScript" :style="{ width: inspectorWidth + 'px' }">
+        <pane-inspector
+          v-if="showInspector"
+          :conn="conn"
+          :app_params="appParams"
+          @abort="onAbort"
+          @scriptOpen="onScriptOpen">
+        </pane-inspector>
+        <div :class="scriptCss" v-if="showScript">
+          <pane-scripts
+            :conn="conn"
+            v-model:script="appParams.script"
+            v-model:scripts="appParams.scripts"
+            ref="pane_scripts">
+          </pane-scripts>
+        </div>
+      </div>
+    </split-pane>
   </div>
 </template>
 
@@ -34,7 +48,8 @@ export default { name: "page-entities" };
 </script>
 
 <script setup>
-import { defineProps, defineModel, ref, computed, watch, nextTick } from 'vue';
+import { defineProps, defineModel, ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import SplitPane from '../../split-pane.vue';
 
 const pane_scripts = ref(null);
 
@@ -46,15 +61,10 @@ const props = defineProps({
 const appParams = defineModel("app_params");
 
 const showScript = computed(() => {
-  if (!props.app_state.has3DCanvas) {
+  if (!appParams.value.script) {
     return false;
-  } else if (!appParams.value.script) {
-    return false;
-  } else if (appParams.value.entity.path) {
-    return false;
-  } else {
-    return true;
   }
+  return true;
 });
 
 const showCanvas = computed(() => {
@@ -80,18 +90,20 @@ function onAbort(evt) {
 }
 
 function onScriptOpen(path) {
-  if (!props.app_state.has3DCanvas) {
-    pane_scripts.value.openScript(path);
-    appParams.value.entity.path = path;
-  } else {
-    appParams.value.entity.path = undefined;
-    appParams.value.scripts.length = 0;
-    pane_scripts.value.openScript(path);
+  appParams.value.entity.path = undefined;
+  
+  appParams.value.script = path;
+  if (!appParams.value.scripts.includes(path)) {
+    appParams.value.scripts.push(path);
   }
+  
+  pane_scripts.value.openScript(path);
 }
 
 function onEntityOpen(path) {
   if (props.app_state.has3DCanvas) {
+    appParams.value.script = undefined;
+    appParams.value.scripts.length = 0;
     pane_scripts.value.closeScripts();
   }
 }
@@ -120,58 +132,176 @@ const canvasCss = computed(() => {
   return classes;
 });
 
-const canvasColumn = computed(() => {
-  let result = 2;
-  if (!appParams.value.sidebar) {
-    result --;
+const sidebarWidth = ref(300);
+const inspectorWidth = ref(500);
+const mainWidth = computed(() => {
+  const totalWidth = window.innerWidth;
+  let width = totalWidth;
+  if (appParams.value.sidebar) {
+    width -= sidebarWidth.value;
   }
-  return result;
+  if (showInspector.value || showScript.value) {
+    width -= inspectorWidth.value;
+  }
+  return width;
 });
 
-const scriptColumn = computed(() => {
-  let result = 2;
-  if (showCanvas.value) {
-    result = 3;
+const sidebarRatio = ref(sidebarWidth.value / window.innerWidth);
+const inspectorRatio = ref(inspectorWidth.value / window.innerWidth);
+
+let isResizing = false;
+let currentHandle = null;
+let initialMouseX = 0;
+let initialSidebarWidth = 0;
+let initialInspectorWidth = 0;
+
+function startResize(handle, e) {
+  isResizing = true;
+  currentHandle = handle;
+  initialMouseX = e.clientX;
+  initialSidebarWidth = sidebarWidth.value;
+  initialInspectorWidth = inspectorWidth.value;
+  
+  document.addEventListener('mousemove', handleResize);
+  document.addEventListener('mouseup', stopResize);
+  document.body.classList.add('noselect');
+  document.body.style.cursor = 'col-resize';
+}
+
+function handleResize(e) {
+  if (!isResizing) return;
+
+  const totalWidth = window.innerWidth;
+  const deltaX = e.clientX - initialMouseX;
+  
+  if (currentHandle === 'sidebar') {
+    const minWidth = 200;
+    const maxWidth = totalWidth - 400;
+    const newWidth = initialSidebarWidth + deltaX;
+    sidebarWidth.value = Math.max(minWidth, Math.min(maxWidth, newWidth));
+    sidebarRatio.value = sidebarWidth.value / totalWidth;
+  } else if (currentHandle === 'inspector') {
+    const minWidth = 300;
+    const maxWidth = totalWidth - (appParams.value.sidebar ? sidebarWidth.value + 400 : 400);
+    const newWidth = initialInspectorWidth - deltaX;
+    inspectorWidth.value = Math.max(minWidth, Math.min(maxWidth, newWidth));
+    inspectorRatio.value = inspectorWidth.value / totalWidth;
   }
-  if (!appParams.value.sidebar) {
-    result --;
-  }
-  return result;
+
+  window.dispatchEvent(new Event('resize'));
+}
+
+function stopResize() {
+  isResizing = false;
+  currentHandle = null;
+  document.removeEventListener('mousemove', handleResize);
+  document.removeEventListener('mouseup', stopResize);
+  document.body.classList.remove('noselect');
+  document.body.style.cursor = '';
+  
+  const handles = document.querySelectorAll('.handle-grab-box');
+  handles.forEach(handle => {
+    handle.style.width = '4px';
+    handle.style.backgroundColor = 'var(--color-border)';
+  });
+}
+
+onMounted(() => {
+  const totalWidth = window.innerWidth;
+  
+  nextTick(() => {
+    if (sidebarWidth.value > totalWidth * 0.3) {
+      sidebarWidth.value = Math.floor(totalWidth * 0.3);
+      sidebarRatio.value = sidebarWidth.value / totalWidth;
+    }
+    
+    if (inspectorWidth.value > totalWidth * 0.4) {
+      inspectorWidth.value = Math.floor(totalWidth * 0.4);
+      inspectorRatio.value = inspectorWidth.value / totalWidth;
+    }
+    
+    window.dispatchEvent(new Event('resize'));
+  });
+  
+  window.addEventListener('resize', () => {
+    if (!isResizing) {
+      const totalWidth = window.innerWidth;
+      const prevTotalWidth = window.prevTotalWidth || totalWidth;
+      window.prevTotalWidth = totalWidth;
+      
+      if (Math.abs(totalWidth - prevTotalWidth) > 50) {
+        if (appParams.value.sidebar) {
+          const newSidebarWidth = Math.floor(totalWidth * sidebarRatio.value);
+          sidebarWidth.value = Math.max(200, Math.min(totalWidth * 0.6, newSidebarWidth));
+        }
+        
+        if (showInspector.value || showScript.value) {
+          const newInspectorWidth = Math.floor(totalWidth * inspectorRatio.value);
+          inspectorWidth.value = Math.max(300, Math.min(totalWidth * 0.6, newInspectorWidth));
+        }
+      }
+    }
+  });
 });
 
-const inspectorColumn = computed(() => {
-  let result = 3;
-  if (!appParams.value.sidebar) {
-    result --;
-  }
-  return result;
+onUnmounted(() => {
+  document.removeEventListener('mousemove', handleResize);
+  document.removeEventListener('mouseup', stopResize);
 });
 
 </script>
 
 <style scoped>
 #page-entities {
-  display: grid;
-  grid-template-columns: 300px calc(100% - 300px - var(--gap)) 0px;
-  grid-template-rows: 100%;
-  gap: var(--gap);
   height: calc(100vh - var(--header-height) - var(--footer-height) - 3 * var(--gap));
+  overflow: hidden;
 }
 
-#page-entities:not(.page-entities-show-inspector):not(.page-entities-show-sidebar) {
-  grid-template-columns: calc(100%);
+.split-pane {
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
 }
 
-#page-entities.page-entities-show-sidebar.page-entities-show-inspector {
-  grid-template-columns: 300px calc(100% - 300px - 500px - 2 * var(--gap)) 500px !important;
+.main-pane {
+  display: flex;
+  flex-direction: column;
 }
 
-#page-entities:not(.page-entities-show-sidebar).page-entities-show-inspector {
-  grid-template-columns: calc(100% - 760px - 1 * var(--gap)) 760px !important;
+.handle {
+  flex: 0 0 var(--gap);
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  cursor: col-resize;
+  position: relative;
+  z-index: 10;
+}
+
+.handle-grab-box {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  background: var(--color-border);
+  transition: width 0.2s, background-color 0.2s;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  cursor: col-resize;
+}
+
+.handle:hover .handle-grab-box {
+  background: var(--color-primary);
+  width: 6px;
 }
 
 div.page-entities-canvas {
-  grid-row: 1;
+  height: 100%;
   border-radius: var(--border-radius-medium);
   overflow: hidden;
 }
@@ -181,13 +311,13 @@ div.page-entities-canvas-hide {
 }
 
 div.page-entities-script {
-  grid-row: 1;
   height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 div.page-entities-inspector {
-  grid-row: 1;
+  height: 100%;
   overflow-x: auto;
 }
-
 </style>
